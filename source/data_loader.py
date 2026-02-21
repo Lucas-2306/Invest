@@ -199,7 +199,7 @@ if __name__ == "__main__":
     loader = BrapiDataLoader(BrapiConfig(api_key=api_key))
 
     # Ajuste aqui se quiser:
-    RANGE = "10y"     # "5y", "10y", "max" (dependendo do suporte)
+    RANGE = "max"     # "5y", "10y", "max" (dependendo do suporte)
     INTERVAL: Interval = "1d"
 
     loader.fetch_many(
