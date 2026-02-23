@@ -1,0 +1,31 @@
+defaults:
+  start_date: "2018-01-01"
+  end_date: null   # null = até hoje
+  interval: "1d"
+
+markets:
+  US:
+    timezone: "America/New_York"
+    tickers:
+      - AAPL
+      - MSFT
+      - AMZN
+      - GOOGL
+      - META
+      - NVDA
+      - TSLA
+      - JPM
+      - V
+      - UNH
+  BR:
+    timezone: "America/Sao_Paulo"
+    tickers:
+      - PETR4.SA
+      - VALE3.SA
+      - ITUB4.SA
+      - BBDC4.SA
+      - BBAS3.SA
+      - ABEV3.SA
+      - WEGE3.SA
+      - MGLU3.SA
+      - SUZB3.SA
