@@ -43,6 +43,16 @@ class SymbolRepository:
         rows = self.session.execute(sql).fetchall()
         return [row[0] for row in rows]
 
+    def list_symbol_ids(self) -> dict[str, str]:
+        sql = text("""
+            SELECT symbol, id
+            FROM market_data.symbols
+            WHERE is_active = TRUE
+            ORDER BY symbol
+        """)
+        rows = self.session.execute(sql).fetchall()
+        return {row[0]: str(row[1]) for row in rows}
+
     def get_symbol_id(self, symbol: str) -> str | None:
         sql = text("""
             SELECT id

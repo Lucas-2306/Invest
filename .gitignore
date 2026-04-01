@@ -1,31 +1,47 @@
 # ===============================
+
 # Python
+
 # ===============================
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+
+**pycache**/
+*.py[cod]
 *.so
 *.egg
 *.egg-info/
 dist/
 build/
 
+# ===============================
+
 # Virtual environments
+
+# ===============================
+
 .venv/
 venv/
 env/
 ENV/
 
 # ===============================
+
 # Data (NUNCA versionar dados)
+
 # ===============================
+
 data/
 !data/.gitkeep
 
+# Training datasets
+
+training/datasets/
+
 # ===============================
+
 # Models / Artifacts
+
 # ===============================
+
 *.pkl
 *.joblib
 *.onnx
@@ -33,51 +49,84 @@ data/
 *.pt
 *.ckpt
 
+# Training outputs
+
+training/models/
+training/reports/
+
+# Backtest outputs
+
+training/reports/backtest/
+
 # ===============================
+
 # Logs
+
 # ===============================
+
 *.log
 logs/
 
 # ===============================
+
 # Environment variables
+
 # ===============================
+
 .env
 .env.*
 !.env.example
 
 # ===============================
+
 # Jupyter
+
 # ===============================
+
 .ipynb_checkpoints/
 
 # ===============================
+
 # IDE
+
 # ===============================
+
 .vscode/
 .idea/
 
 # ===============================
+
 # OS
+
 # ===============================
+
 .DS_Store
 Thumbs.db
 
 # ===============================
+
 # Pytest / coverage
+
 # ===============================
+
 .pytest_cache/
 .coverage
 htmlcov/
 
 # ===============================
+
 # Docker
+
 # ===============================
+
 *.tar
 docker/*.tar
 
 # ===============================
+
 # Misc
+
 # ===============================
+
 *.tmp
 *.swp

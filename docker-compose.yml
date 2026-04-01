@@ -34,5 +34,17 @@ services:
     working_dir: /app
     command: ["python", "src/app.py"]
 
+  training:
+    build:
+      context: .
+      dockerfile: training/Dockerfile
+    container_name: stocks_training
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - ./training:/app
+
 volumes:
   postgres_data:

@@ -1,5 +1,6 @@
 from datetime import date
 
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -55,3 +56,28 @@ class PriceRepository:
         """)
         rows = self.session.execute(sql).fetchall()
         return {str(row[0]): row[1] for row in rows if row[1] is not None}
+
+    def get_prices_as_dataframe(self, symbol_id: str, start_date=None) -> pd.DataFrame:
+        sql = """
+            SELECT
+                trade_date,
+                open_price,
+                high_price,
+                low_price,
+                close_price,
+                adjusted_close_price,
+                volume
+            FROM market_data.daily_prices
+            WHERE symbol_id = :symbol_id
+        """
+
+        params = {"symbol_id": symbol_id}
+
+        if start_date is not None:
+            sql += " AND trade_date >= :start_date"
+            params["start_date"] = start_date
+
+        sql += " ORDER BY trade_date"
+
+        result = self.session.execute(text(sql), params)
+        return pd.DataFrame(result.fetchall(), columns=result.keys())
