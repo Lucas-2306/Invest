@@ -1,8 +1,0 @@
-label:
-  horizon_days: 1   # t+1
-
-features:
-  return_lags: [1, 2, 5, 10]
-  vol_windows: [5, 10, 20]
-  mom_windows: [5, 10, 20]
-  dollarvol_windows: [5, 20]   # log(volume * close) rolling mean

@@ -1,0 +1,38 @@
+services:
+  db:
+    image: timescale/timescaledb:2.18.2-pg16
+    container_name: stocks_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ingestion:
+    build:
+      context: ./ingestion
+      dockerfile: Dockerfile
+    container_name: stocks_ingestion
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./ingestion:/app
+    working_dir: /app
+    command: ["python", "src/app.py"]
+
+volumes:
+  postgres_data:
