@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS market_data.features (
     gap NUMERIC(18,8),
 
     target_5d NUMERIC(18,8),
+    target_5d_t1 NUMERIC(18,8),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

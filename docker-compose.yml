@@ -19,32 +19,33 @@ services:
 
   ingestion:
     build:
-      context: ./ingestion
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: infra/docker/ingestion.Dockerfile
     container_name: stocks_ingestion
     env_file:
       - .env
-    environment:
-      PYTHONPATH: /app/src
     depends_on:
       db:
         condition: service_healthy
-    volumes:
-      - ./ingestion:/app
     working_dir: /app
-    command: ["python", "src/app.py"]
+    volumes:
+      - .:/app
+    command: ["python", "-m", "jobs.ingestion.full_build"]
 
   training:
     build:
       context: .
-      dockerfile: training/Dockerfile
+      dockerfile: infra/docker/training.Dockerfile
     container_name: stocks_training
     env_file:
       - .env
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    working_dir: /app
     volumes:
-      - ./training:/app
+      - .:/app
+    command: ["python", "-m", "jobs.training.full_train"]
 
 volumes:
   postgres_data:

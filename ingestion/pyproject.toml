@@ -1,8 +1,0 @@
-[project]
-name = "brazil-stocks-ingestion"
-version = "0.1.0"
-description = "Data ingestion pipeline for Brazilian stocks"
-requires-python = ">=3.12"
-
-[tool.pytest.ini_options]
-pythonpath = ["src"]
