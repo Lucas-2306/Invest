@@ -1,30 +1,76 @@
 from pathlib import Path
 import pandas as pd
+import numpy as np
 
 from core.training_config import OUTPUT_DIR, settings
 from core.training_db import engine
 
 
-FEATURE_COLUMNS = [
+BASE_FEATURE_COLUMNS = [
     "return_1d",
     "return_5d",
     "return_21d",
     "log_return_1d",
-    "sma_20",
-    "sma_50",
     "price_sma_20_ratio",
     "volatility_21d",
     "volume_ratio_20d",
     "high_low_ratio",
     "gap",
-    "target_5d",
     "return_1d_vs_sector",
     "return_5d_vs_sector",
+
+    "market_cap",
+    "price_to_earnings",
+    "price_to_book",
+    "eps",
+    "roe",
+    "roa",
+    "debt_to_equity",
+    "fifty_two_week_high",
+    "fifty_two_week_low",
+    "sma20_to_52w_high",
+    "sma20_to_52w_low",
+]
+
+CS_FEATURE_COLUMNS = [f"{col}_cs" for col in BASE_FEATURE_COLUMNS]
+
+# colunas mínimas para manter uma linha no dataset
+REQUIRED_CORE_COLUMNS = [
+    "return_1d",
+    "return_5d",
+    "return_21d",
+    "log_return_1d",
+    "price_sma_20_ratio",
+    "volatility_21d",
+    "volume_ratio_20d",
+    "high_low_ratio",
+    "gap",
+    "return_1d_vs_sector",
+    "return_5d_vs_sector",
+    "target_5d",
 ]
 
 
 def load_dataset(start_date: str) -> pd.DataFrame:
     query = f"""
+        WITH latest_fundamentals AS (
+            SELECT DISTINCT ON (fs.symbol_id)
+                fs.symbol_id,
+                fs.reference_date,
+                fs.market_cap,
+                fs.price_to_earnings,
+                fs.price_to_book,
+                fs.eps,
+                fs.roe,
+                fs.roa,
+                fs.debt_to_equity,
+                fs.dividend_yield,
+                fs.beta,
+                fs.fifty_two_week_high,
+                fs.fifty_two_week_low
+            FROM market_data.fundamentals_snapshot fs
+            ORDER BY fs.symbol_id, fs.reference_date DESC
+        )
         SELECT
             f.symbol_id,
             s.symbol,
@@ -42,12 +88,27 @@ def load_dataset(start_date: str) -> pd.DataFrame:
             f.gap,
             f.target_5d,
             f.target_5d_t1,
-            c.sector
+            c.sector,
+
+            lf.market_cap,
+            lf.price_to_earnings,
+            lf.price_to_book,
+            lf.eps,
+            lf.roe,
+            lf.roa,
+            lf.debt_to_equity,
+            lf.dividend_yield,
+            lf.beta,
+            lf.fifty_two_week_high,
+            lf.fifty_two_week_low
+
         FROM market_data.features f
         JOIN market_data.symbols s
           ON s.id = f.symbol_id
         JOIN market_data.companies c
           ON c.id = s.company_id
+        LEFT JOIN latest_fundamentals lf
+          ON lf.symbol_id = f.symbol_id
         WHERE f.trade_date >= '{start_date}'
         ORDER BY f.trade_date, s.symbol
     """
@@ -84,12 +145,75 @@ def add_sector_relative_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def clip_target(df: pd.DataFrame) -> pd.DataFrame:
+def add_fundamental_relative_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # 🔥 remove outliers extremos
-    df["target_5d"] = df["target_5d"].clip(-0.2, 0.2)
+    valid_high = df["fifty_two_week_high"].notna() & (df["fifty_two_week_high"] > 0)
+    valid_low = df["fifty_two_week_low"].notna() & (df["fifty_two_week_low"] > 0)
+    valid_sma20 = df["sma_20"].notna() & (df["sma_20"] > 0)
 
+    df["sma20_to_52w_high"] = np.nan
+    df.loc[valid_sma20 & valid_high, "sma20_to_52w_high"] = (
+        df.loc[valid_sma20 & valid_high, "sma_20"]
+        / df.loc[valid_sma20 & valid_high, "fifty_two_week_high"]
+    )
+
+    df["sma20_to_52w_low"] = np.nan
+    df.loc[valid_sma20 & valid_low, "sma20_to_52w_low"] = (
+        df.loc[valid_sma20 & valid_low, "sma_20"]
+        / df.loc[valid_sma20 & valid_low, "fifty_two_week_low"]
+    )
+
+    df["sma20_to_52w_high"] = df["sma20_to_52w_high"].where(
+        df["sma20_to_52w_high"].between(0.01, 100)
+    )
+    df["sma20_to_52w_low"] = df["sma20_to_52w_low"].where(
+        df["sma20_to_52w_low"].between(0.01, 100)
+    )
+
+    return df
+
+
+def add_cross_sectional_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    cs_columns = [
+        "return_1d",
+        "return_5d",
+        "return_21d",
+        "log_return_1d",
+        "price_sma_20_ratio",
+        "volatility_21d",
+        "volume_ratio_20d",
+        "high_low_ratio",
+        "gap",
+        "return_1d_vs_sector",
+        "return_5d_vs_sector",
+
+        "market_cap",
+        "price_to_earnings",
+        "price_to_book",
+        "eps",
+        "roe",
+        "roa",
+        "debt_to_equity",
+        "dividend_yield",
+        "beta",
+        "fifty_two_week_high",
+        "fifty_two_week_low",
+        "sma20_to_52w_high",
+        "sma20_to_52w_low",
+    ]
+
+    for col in cs_columns:
+        df[f"{col}_cs"] = df.groupby("trade_date")[col].rank(pct=True)
+
+    return df
+
+
+def clip_target(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df["target_5d"] = df["target_5d"].clip(-0.2, 0.2)
     return df
 
 
@@ -98,11 +222,12 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     df = normalize_sector(df)
     df = add_sector_relative_features(df)
-
-    # 🔥 NOVO
+    df = add_fundamental_relative_features(df)
+    df = add_cross_sectional_features(df)
     df = clip_target(df)
 
-    df = df.dropna(subset=FEATURE_COLUMNS)
+    # exige apenas o núcleo técnico + target
+    df = df.dropna(subset=REQUIRED_CORE_COLUMNS)
 
     df = pd.get_dummies(
         df,
@@ -143,6 +268,27 @@ def print_summary(df: pd.DataFrame) -> None:
 
     print("\nResumo do target_5d (clipado)")
     print(df["target_5d"].describe())
+
+    print("\nPreenchimento de colunas fundamentais")
+    print(
+        df[
+            [
+                "market_cap",
+                "price_to_earnings",
+                "price_to_book",
+                "eps",
+                "roe",
+                "roa",
+                "debt_to_equity",
+                "dividend_yield",
+                "beta",
+                "fifty_two_week_high",
+                "fifty_two_week_low",
+                "sma20_to_52w_high",
+                "sma20_to_52w_low",
+            ]
+        ].notna().mean().sort_values()
+    )
 
 
 def main() -> None:

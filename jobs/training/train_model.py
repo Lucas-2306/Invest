@@ -63,8 +63,30 @@ def temporal_split(df: pd.DataFrame, train_ratio: float = 0.8) -> tuple[pd.DataF
     return train_df, test_df
 
 
+def drop_all_null_columns(
+    X_train: pd.DataFrame,
+    X_test: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    valid_columns = X_train.columns[X_train.notna().any()].tolist()
+
+    dropped_columns = [c for c in X_train.columns if c not in valid_columns]
+    if dropped_columns:
+        print("\nColunas removidas por estarem 100% nulas no treino")
+        print(dropped_columns)
+
+    X_train = X_train[valid_columns].copy()
+    X_test = X_test[valid_columns].copy()
+
+    return X_train, X_test, valid_columns
+
+
 def build_xy(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
     X = df.drop(columns=DROP_COLUMNS, errors="ignore").copy()
+    # 🔥 priorizar features cross-sectional
+    cs_cols = [c for c in X.columns if c.endswith("_cs")]
+
+    if cs_cols:
+        X = X[cs_cols + [c for c in X.columns if c not in cs_cols]]
     y = df[TARGET_COLUMN].copy()
     return X, y
 
@@ -76,8 +98,10 @@ def fit_imputer(X_train: pd.DataFrame) -> SimpleImputer:
 
 
 def transform_with_imputer(imputer: SimpleImputer, X: pd.DataFrame) -> pd.DataFrame:
+    transformed = imputer.transform(X)
+
     X_imputed = pd.DataFrame(
-        imputer.transform(X),
+        transformed,
         columns=X.columns,
         index=X.index,
     )
@@ -200,7 +224,7 @@ def main() -> None:
     X_train_raw, y_train = build_xy(train_df)
     X_test_raw, y_test = build_xy(test_df)
 
-    feature_names = X_train_raw.columns.tolist()
+    X_train_raw, X_test_raw, feature_names = drop_all_null_columns(X_train_raw, X_test_raw)
 
     print("\nResumo do treino")
     print("----------------")

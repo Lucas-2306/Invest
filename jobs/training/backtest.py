@@ -14,7 +14,6 @@ REPORT_DIR = BASE_DIR / "artifacts" / "reports"
 BACKTEST_DIR = REPORT_DIR / "backtest"
 MODEL_REPORT_PATH = REPORT_DIR / "test_predictions.csv"
 
-# Ajuste esta constante se o nome real da sua tabela de preços for diferente.
 PRICE_TABLE = "market_data.daily_prices"
 
 INITIAL_CAPITAL = 100000.0
@@ -23,7 +22,33 @@ BOTTOM_N = 5
 TRANSACTION_COST_PER_SIDE = 0.001
 SLIPPAGE = 0.001
 HOLDING_DAYS = 5
-REBALANCE_EVERY_N_DAYS = 5
+
+# Estratégia de execução:
+# - "block_5d": rebalance a cada 5 dias, um lote por vez
+# - "staggered": rebalance diário, holding de 5 dias, lotes simultâneos com exposição controlada
+BACKTEST_STRATEGY = "staggered"
+
+# Modo de portfólio:
+# - "long_short"
+# - "long_only"
+# - "short_only"
+PORTFOLIO_MODE = "short_only"
+
+
+def get_strategy_config() -> dict:
+    if BACKTEST_STRATEGY == "block_5d":
+        return {
+            "rebalance_every_n_days": 5,
+            "normalize_active_lots": False,
+        }
+
+    if BACKTEST_STRATEGY == "staggered":
+        return {
+            "rebalance_every_n_days": 1,
+            "normalize_active_lots": True,
+        }
+
+    raise ValueError(f"Estratégia desconhecida: {BACKTEST_STRATEGY}")
 
 
 def load_predictions() -> pd.DataFrame:
@@ -34,11 +59,7 @@ def load_predictions() -> pd.DataFrame:
 
     df = pd.read_csv(MODEL_REPORT_PATH, parse_dates=["trade_date"])
 
-    required_cols = {
-        "trade_date",
-        "symbol",
-        "prediction",
-    }
+    required_cols = {"trade_date", "symbol", "prediction"}
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"Colunas ausentes em test_predictions.csv: {sorted(missing)}")
@@ -57,7 +78,7 @@ def load_prices(symbols: list[str], start_date: pd.Timestamp, end_date: pd.Times
             p.open_price,
             p.close_price,
             p.adjusted_close_price
-        FROM market_data.daily_prices p
+        FROM {PRICE_TABLE} p
         JOIN market_data.symbols s
           ON s.id = p.symbol_id
         WHERE s.symbol IN ({symbols_sql})
@@ -109,28 +130,27 @@ def select_rebalance_dates(preds: pd.DataFrame, step: int) -> list[pd.Timestamp]
 def select_positions(day_df: pd.DataFrame, top_n: int, bottom_n: int, mode: str = "long_short") -> pd.DataFrame:
     day_df = day_df.sort_values("prediction", ascending=False).copy()
 
-    if mode == "long_only":
-        longs = day_df.head(top_n).copy()
-        shorts = pd.DataFrame(columns=day_df.columns)
-    elif mode == "short_only":
-        longs = pd.DataFrame(columns=day_df.columns)
-        shorts = day_df.tail(bottom_n).copy()
-    else:
-        longs = day_df.head(top_n).copy()
-        shorts = day_df.tail(bottom_n).copy()
+    dfs = []
 
-    if not longs.empty:
-        longs["side"] = "long"
-    if not shorts.empty:
-        shorts["side"] = "short"
+    if mode in ["long_short", "long_only"]:
+        longs = day_df.head(top_n).copy()
+        if not longs.empty:
+            longs["side"] = "long"
+            dfs.append(longs)
 
-    positions = pd.concat([longs, shorts], ignore_index=True)
+    if mode in ["long_short", "short_only"]:
+        shorts = day_df.tail(bottom_n).copy()
+        if not shorts.empty:
+            shorts["side"] = "short"
+            dfs.append(shorts)
+
+    if not dfs:
+        return pd.DataFrame(columns=day_df.columns)
+
+    positions = pd.concat(dfs, ignore_index=True)
 
     total_positions = len(positions)
-    if total_positions == 0:
-        positions["weight"] = 0.0
-    else:
-        positions["weight"] = 1.0 / total_positions
+    positions["weight"] = 1.0 / total_positions if total_positions > 0 else 0.0
 
     return positions
 
@@ -149,7 +169,6 @@ def get_trade_window(
     except ValueError:
         return None
 
-    # sinal em t, entrada no close de t+1, saída no close de t+6
     entry_idx = signal_idx + 1
     exit_idx = signal_idx + 1 + holding_days
 
@@ -158,9 +177,6 @@ def get_trade_window(
 
     entry_date = calendar[entry_idx]
     exit_date = calendar[exit_idx]
-
-    # retornos que capturam close-to-close de t+1 até t+6:
-    # datas de pnl: t+2, t+3, t+4, t+5, t+6
     active_return_dates = calendar[entry_idx + 1 : exit_idx + 1]
 
     if len(active_return_dates) != holding_days:
@@ -185,16 +201,11 @@ def build_trade_book(
     trade_id = 0
 
     for signal_date in rebalance_dates:
-        window = get_trade_window(
-            signal_date=signal_date,
-            calendar=calendar,
-            holding_days=holding_days,
-        )
+        window = get_trade_window(signal_date=signal_date, calendar=calendar, holding_days=holding_days)
         if window is None:
             continue
 
         entry_date, exit_date, active_return_dates = window
-
         day_df = preds[preds["trade_date"] == signal_date].copy()
         positions = select_positions(day_df, top_n=top_n, bottom_n=bottom_n, mode=mode)
 
@@ -245,6 +256,7 @@ def expand_trades_to_daily_positions(trades: pd.DataFrame, prices: pd.DataFrame)
                     "entry_date": pd.to_datetime(trade["entry_date"]),
                     "exit_date": pd.to_datetime(trade["exit_date"]),
                     "prediction": float(trade["prediction"]),
+                    "row_type": "market_return",
                 }
             )
 
@@ -267,37 +279,104 @@ def expand_trades_to_daily_positions(trades: pd.DataFrame, prices: pd.DataFrame)
         -daily_positions["daily_return"],
     )
 
+    daily_positions["capital_scale"] = 1.0
     daily_positions["position_contribution"] = (
         daily_positions["weight"] * daily_positions["position_return"]
+    )
+
+    daily_positions["signed_weight"] = np.where(
+        daily_positions["side"] == "long",
+        daily_positions["weight"],
+        -daily_positions["weight"],
     )
 
     return daily_positions
 
 
+def normalize_active_lots_exposure(daily_positions: pd.DataFrame) -> pd.DataFrame:
+    df = daily_positions.copy()
+
+    if "row_type" not in df.columns:
+        df["row_type"] = "market_return"
+
+    market_df = df[df["row_type"] == "market_return"].copy()
+
+    active_lots = (
+        market_df.groupby("trade_date")["signal_date"]
+        .nunique()
+        .rename("num_active_lots")
+        .reset_index()
+    )
+
+    df = df.merge(active_lots, on="trade_date", how="left")
+    df["num_active_lots"] = df["num_active_lots"].fillna(0).astype(int)
+
+    is_market = df["row_type"] == "market_return"
+    df["capital_scale"] = 1.0
+
+    valid_market = is_market & (df["num_active_lots"] > 0)
+    df.loc[valid_market, "capital_scale"] = 1.0 / df.loc[valid_market, "num_active_lots"]
+
+    df["position_contribution"] = np.where(
+        is_market,
+        df["weight"] * df["position_return"] * df["capital_scale"],
+        df["position_contribution"],
+    )
+
+    return df
+
+
 def apply_transaction_costs(daily_positions: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
     daily_positions = daily_positions.copy()
+
+    if "row_type" not in daily_positions.columns:
+        daily_positions["row_type"] = "market_return"
+
+    active_lots = (
+        daily_positions[daily_positions["row_type"] == "market_return"]
+        .groupby("trade_date")["signal_date"]
+        .nunique()
+        .rename("num_active_lots")
+        .reset_index()
+    )
+
+    active_lots_map = dict(zip(active_lots["trade_date"], active_lots["num_active_lots"]))
 
     cost_rows: list[dict] = []
 
     for _, trade in trades.iterrows():
         weight = float(trade["weight"])
+        entry_date = pd.to_datetime(trade["entry_date"])
+        exit_date = pd.to_datetime(trade["exit_date"])
 
-        entry_cost = weight * (TRANSACTION_COST_PER_SIDE + SLIPPAGE)
-        exit_cost = weight * TRANSACTION_COST_PER_SIDE
+        entry_active_lots = int(active_lots_map.get(entry_date, 1))
+        exit_active_lots = int(active_lots_map.get(exit_date, 1))
+
+        entry_scale = 1.0 / entry_active_lots if entry_active_lots > 0 else 1.0
+        exit_scale = 1.0 / exit_active_lots if exit_active_lots > 0 else 1.0
+
+        entry_cost = weight * entry_scale * (TRANSACTION_COST_PER_SIDE + SLIPPAGE)
+        exit_cost = weight * exit_scale * TRANSACTION_COST_PER_SIDE
+
+        base_row = {
+            "trade_id": int(trade["trade_id"]),
+            "symbol": str(trade["symbol"]),
+            "side": str(trade["side"]),
+            "weight": weight,
+            "signal_date": pd.to_datetime(trade["signal_date"]),
+            "entry_date": entry_date,
+            "exit_date": exit_date,
+            "prediction": float(trade["prediction"]),
+            "daily_return": np.nan,
+            "position_return": 0.0,
+            "signed_weight": 0.0,
+        }
 
         cost_rows.append(
             {
-                "trade_id": int(trade["trade_id"]),
-                "trade_date": pd.to_datetime(trade["entry_date"]),
-                "symbol": str(trade["symbol"]),
-                "side": str(trade["side"]),
-                "weight": weight,
-                "signal_date": pd.to_datetime(trade["signal_date"]),
-                "entry_date": pd.to_datetime(trade["entry_date"]),
-                "exit_date": pd.to_datetime(trade["exit_date"]),
-                "prediction": float(trade["prediction"]),
-                "daily_return": np.nan,
-                "position_return": 0.0,
+                **base_row,
+                "trade_date": entry_date,
+                "capital_scale": entry_scale,
                 "position_contribution": -entry_cost,
                 "row_type": "entry_cost",
             }
@@ -305,24 +384,13 @@ def apply_transaction_costs(daily_positions: pd.DataFrame, trades: pd.DataFrame)
 
         cost_rows.append(
             {
-                "trade_id": int(trade["trade_id"]),
-                "trade_date": pd.to_datetime(trade["exit_date"]),
-                "symbol": str(trade["symbol"]),
-                "side": str(trade["side"]),
-                "weight": weight,
-                "signal_date": pd.to_datetime(trade["signal_date"]),
-                "entry_date": pd.to_datetime(trade["entry_date"]),
-                "exit_date": pd.to_datetime(trade["exit_date"]),
-                "prediction": float(trade["prediction"]),
-                "daily_return": np.nan,
-                "position_return": 0.0,
+                **base_row,
+                "trade_date": exit_date,
+                "capital_scale": exit_scale,
                 "position_contribution": -exit_cost,
                 "row_type": "exit_cost",
             }
         )
-
-    if "row_type" not in daily_positions.columns:
-        daily_positions["row_type"] = "market_return"
 
     cost_df = pd.DataFrame(cost_rows)
     out = pd.concat([daily_positions, cost_df], ignore_index=True)
@@ -331,13 +399,56 @@ def apply_transaction_costs(daily_positions: pd.DataFrame, trades: pd.DataFrame)
     return out
 
 
+def compute_turnover(trades: pd.DataFrame) -> pd.DataFrame:
+    if trades.empty:
+        return pd.DataFrame(
+            columns=[
+                "signal_date",
+                "num_prev_symbols",
+                "num_curr_symbols",
+                "kept_symbols",
+                "entered_symbols",
+                "exited_symbols",
+                "turnover_ratio",
+            ]
+        )
+
+    rows: list[dict] = []
+    previous_symbols: set[str] = set()
+
+    for signal_date, group in trades.groupby("signal_date"):
+        current_symbols = set(group["symbol"].astype(str).tolist())
+
+        kept = len(previous_symbols & current_symbols)
+        entered = len(current_symbols - previous_symbols)
+        exited = len(previous_symbols - current_symbols)
+
+        denom = max(len(previous_symbols), len(current_symbols), 1)
+        turnover_ratio = (entered + exited) / denom
+
+        rows.append(
+            {
+                "signal_date": pd.to_datetime(signal_date),
+                "num_prev_symbols": int(len(previous_symbols)),
+                "num_curr_symbols": int(len(current_symbols)),
+                "kept_symbols": int(kept),
+                "entered_symbols": int(entered),
+                "exited_symbols": int(exited),
+                "turnover_ratio": float(turnover_ratio),
+            }
+        )
+
+        previous_symbols = current_symbols
+
+    return pd.DataFrame(rows).sort_values("signal_date").reset_index(drop=True)
+
+
 def build_daily_equity_curve(daily_positions: pd.DataFrame, initial_capital: float) -> pd.DataFrame:
     df = daily_positions.copy()
 
     if "row_type" not in df.columns:
         df["row_type"] = "market_return"
 
-    # 1) Retorno total do dia: inclui mercado + custos
     pnl_by_day = (
         df.groupby("trade_date", as_index=False)
         .agg(
@@ -347,30 +458,47 @@ def build_daily_equity_curve(daily_positions: pd.DataFrame, initial_capital: flo
         .reset_index(drop=True)
     )
 
-    # 2) Exposição e contagem: apenas posições de mercado
     market_df = df[df["row_type"] == "market_return"].copy()
+
+    market_df["gross_weight_raw"] = market_df["weight"]
+    market_df["gross_weight_effective"] = market_df["weight"] * market_df["capital_scale"]
+    market_df["net_weight_effective"] = market_df["signed_weight"] * market_df["capital_scale"]
+
+    market_df["long_contribution"] = np.where(
+        market_df["side"] == "long",
+        market_df["position_contribution"],
+        0.0,
+    )
+    market_df["short_contribution"] = np.where(
+        market_df["side"] == "short",
+        market_df["position_contribution"],
+        0.0,
+    )
 
     exposure_by_day = (
         market_df.groupby("trade_date", as_index=False)
         .agg(
             num_active_rows=("trade_id", "count"),
             num_active_trades=("trade_id", "nunique"),
-            gross_exposure=("weight", "sum"),
+            gross_exposure_raw=("gross_weight_raw", "sum"),
+            gross_exposure_effective=("gross_weight_effective", "sum"),
+            net_exposure_effective=("net_weight_effective", "sum"),
+            long_contribution=("long_contribution", "sum"),
+            short_contribution=("short_contribution", "sum"),
         )
         .sort_values("trade_date")
         .reset_index(drop=True)
     )
 
-    # 3) Junta as duas visões
-    grouped = pnl_by_day.merge(
-        exposure_by_day,
-        on="trade_date",
-        how="left",
-    )
+    grouped = pnl_by_day.merge(exposure_by_day, on="trade_date", how="left")
 
     grouped["num_active_rows"] = grouped["num_active_rows"].fillna(0).astype(int)
     grouped["num_active_trades"] = grouped["num_active_trades"].fillna(0).astype(int)
-    grouped["gross_exposure"] = grouped["gross_exposure"].fillna(0.0)
+    grouped["gross_exposure_raw"] = grouped["gross_exposure_raw"].fillna(0.0)
+    grouped["gross_exposure_effective"] = grouped["gross_exposure_effective"].fillna(0.0)
+    grouped["net_exposure_effective"] = grouped["net_exposure_effective"].fillna(0.0)
+    grouped["long_contribution"] = grouped["long_contribution"].fillna(0.0)
+    grouped["short_contribution"] = grouped["short_contribution"].fillna(0.0)
 
     rows: list[dict] = []
 
@@ -393,7 +521,11 @@ def build_daily_equity_curve(daily_positions: pd.DataFrame, initial_capital: flo
                 "drawdown": drawdown,
                 "num_active_rows": int(row["num_active_rows"]),
                 "num_active_trades": int(row["num_active_trades"]),
-                "gross_exposure": float(row["gross_exposure"]),
+                "gross_exposure_raw": float(row["gross_exposure_raw"]),
+                "gross_exposure_effective": float(row["gross_exposure_effective"]),
+                "net_exposure_effective": float(row["net_exposure_effective"]),
+                "long_contribution": float(row["long_contribution"]),
+                "short_contribution": float(row["short_contribution"]),
             }
         )
 
@@ -405,7 +537,12 @@ def build_daily_equity_curve(daily_positions: pd.DataFrame, initial_capital: flo
     return equity_curve
 
 
-def compute_metrics(equity_curve: pd.DataFrame, initial_capital: float) -> dict:
+def compute_metrics(
+    equity_curve: pd.DataFrame,
+    initial_capital: float,
+    strategy: dict,
+    turnover_df: pd.DataFrame,
+) -> dict:
     total_return = (equity_curve["end_capital"].iloc[-1] / initial_capital) - 1.0
     avg_daily_return = equity_curve["daily_return"].mean()
     daily_vol = equity_curve["daily_return"].std()
@@ -417,7 +554,22 @@ def compute_metrics(equity_curve: pd.DataFrame, initial_capital: float) -> dict:
     max_drawdown = equity_curve["drawdown"].min()
     positive_days = (equity_curve["daily_return"] > 0).mean()
 
+    long_avg_daily = equity_curve["long_contribution"].mean()
+    short_avg_daily = equity_curve["short_contribution"].mean()
+
+    long_total_contribution = equity_curve["long_contribution"].sum()
+    short_total_contribution = equity_curve["short_contribution"].sum()
+
+    avg_gross_exposure_effective = equity_curve["gross_exposure_effective"].mean()
+    avg_net_exposure_effective = equity_curve["net_exposure_effective"].mean()
+
+    avg_turnover = turnover_df["turnover_ratio"].mean() if not turnover_df.empty else None
+    median_turnover = turnover_df["turnover_ratio"].median() if not turnover_df.empty else None
+    max_turnover = turnover_df["turnover_ratio"].max() if not turnover_df.empty else None
+
     metrics = {
+        "strategy": BACKTEST_STRATEGY,
+        "portfolio_mode": PORTFOLIO_MODE,
         "initial_capital": float(initial_capital),
         "final_capital": float(equity_curve["end_capital"].iloc[-1]),
         "total_return": float(total_return),
@@ -432,7 +584,17 @@ def compute_metrics(equity_curve: pd.DataFrame, initial_capital: float) -> dict:
         "transaction_cost_per_side": float(TRANSACTION_COST_PER_SIDE),
         "slippage": float(SLIPPAGE),
         "holding_days": int(HOLDING_DAYS),
-        "rebalance_every_n_days": int(REBALANCE_EVERY_N_DAYS),
+        "rebalance_every_n_days": int(strategy["rebalance_every_n_days"]),
+        "normalize_active_lots": bool(strategy["normalize_active_lots"]),
+        "long_avg_daily_return": float(long_avg_daily),
+        "short_avg_daily_return": float(short_avg_daily),
+        "long_total_contribution": float(long_total_contribution),
+        "short_total_contribution": float(short_total_contribution),
+        "avg_gross_exposure_effective": float(avg_gross_exposure_effective),
+        "avg_net_exposure_effective": float(avg_net_exposure_effective),
+        "avg_turnover": float(avg_turnover) if avg_turnover is not None and pd.notna(avg_turnover) else None,
+        "median_turnover": float(median_turnover) if median_turnover is not None and pd.notna(median_turnover) else None,
+        "max_turnover": float(max_turnover) if max_turnover is not None and pd.notna(max_turnover) else None,
     }
 
     return metrics
@@ -447,6 +609,8 @@ def analyze_by_year(equity_curve: pd.DataFrame) -> None:
         avg_return=("daily_return", "mean"),
         vol=("daily_return", "std"),
         win_rate=("daily_return", lambda x: (x > 0).mean()),
+        long_avg=("long_contribution", "mean"),
+        short_avg=("short_contribution", "mean"),
     )
 
     yearly["sharpe"] = yearly["avg_return"] / yearly["vol"] * np.sqrt(252)
@@ -456,17 +620,13 @@ def analyze_by_year(equity_curve: pd.DataFrame) -> None:
     print(yearly)
 
 
-def run_cost_sensitivity(
-    preds: pd.DataFrame,
-    prices: pd.DataFrame,
-) -> None:
+def run_cost_sensitivity(preds: pd.DataFrame, prices: pd.DataFrame, strategy: dict) -> None:
     costs = [0.001, 0.002, 0.003]
 
     print("\nSensibilidade a custo")
     print("---------------------")
 
     global TRANSACTION_COST_PER_SIDE
-
     original_cost = TRANSACTION_COST_PER_SIDE
 
     for cost in costs:
@@ -477,14 +637,20 @@ def run_cost_sensitivity(
             prices=prices,
             top_n=TOP_N,
             bottom_n=BOTTOM_N,
-            rebalance_every_n_days=REBALANCE_EVERY_N_DAYS,
+            rebalance_every_n_days=strategy["rebalance_every_n_days"],
             holding_days=HOLDING_DAYS,
-            mode="long_short",
+            mode=PORTFOLIO_MODE,
         )
+
         daily_positions = expand_trades_to_daily_positions(trades, prices)
+
+        if strategy["normalize_active_lots"]:
+            daily_positions = normalize_active_lots_exposure(daily_positions)
+
         daily_positions = apply_transaction_costs(daily_positions, trades)
+        turnover_df = compute_turnover(trades)
         equity_curve = build_daily_equity_curve(daily_positions, INITIAL_CAPITAL)
-        metrics = compute_metrics(equity_curve, INITIAL_CAPITAL)
+        metrics = compute_metrics(equity_curve, INITIAL_CAPITAL, strategy, turnover_df)
 
         print(f"\nCusto: {cost}")
         print(f"Sharpe: {metrics['annualized_sharpe']}")
@@ -497,6 +663,7 @@ def save_outputs(
     equity_curve: pd.DataFrame,
     trades: pd.DataFrame,
     daily_positions: pd.DataFrame,
+    turnover_df: pd.DataFrame,
     metrics: dict,
 ) -> None:
     BACKTEST_DIR.mkdir(parents=True, exist_ok=True)
@@ -504,11 +671,13 @@ def save_outputs(
     equity_path = BACKTEST_DIR / "equity_curve.csv"
     trades_path = BACKTEST_DIR / "trade_book.csv"
     daily_positions_path = BACKTEST_DIR / "daily_positions.csv"
+    turnover_path = BACKTEST_DIR / "turnover.csv"
     metrics_path = BACKTEST_DIR / "backtest_metrics.json"
 
     equity_curve.to_csv(equity_path, index=False)
     trades.to_csv(trades_path, index=False)
     daily_positions.to_csv(daily_positions_path, index=False)
+    turnover_df.to_csv(turnover_path, index=False)
 
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
@@ -516,6 +685,7 @@ def save_outputs(
     print(f"Curva de patrimônio salva em: {equity_path}")
     print(f"Trade book salvo em: {trades_path}")
     print(f"Posições diárias salvas em: {daily_positions_path}")
+    print(f"Turnover salvo em: {turnover_path}")
     print(f"Métricas salvas em: {metrics_path}")
 
 
@@ -531,6 +701,7 @@ def print_summary(metrics: dict, equity_curve: pd.DataFrame) -> None:
 
 
 def main() -> None:
+    strategy = get_strategy_config()
     preds = load_predictions()
 
     start_date = preds["trade_date"].min()
@@ -548,25 +719,30 @@ def main() -> None:
         prices=prices,
         top_n=TOP_N,
         bottom_n=BOTTOM_N,
-        rebalance_every_n_days=REBALANCE_EVERY_N_DAYS,
+        rebalance_every_n_days=strategy["rebalance_every_n_days"],
         holding_days=HOLDING_DAYS,
-        mode="long_short",
+        mode=PORTFOLIO_MODE,
     )
 
     daily_positions = expand_trades_to_daily_positions(trades, prices)
+
+    if strategy["normalize_active_lots"]:
+        daily_positions = normalize_active_lots_exposure(daily_positions)
+
     daily_positions = apply_transaction_costs(daily_positions, trades)
+    turnover_df = compute_turnover(trades)
 
     equity_curve = build_daily_equity_curve(
         daily_positions=daily_positions,
         initial_capital=INITIAL_CAPITAL,
     )
 
-    metrics = compute_metrics(equity_curve, INITIAL_CAPITAL)
+    metrics = compute_metrics(equity_curve, INITIAL_CAPITAL, strategy, turnover_df)
 
-    save_outputs(equity_curve, trades, daily_positions, metrics)
+    save_outputs(equity_curve, trades, daily_positions, turnover_df, metrics)
     print_summary(metrics, equity_curve)
     analyze_by_year(equity_curve)
-    run_cost_sensitivity(preds, prices)
+    run_cost_sensitivity(preds, prices, strategy)
 
 
 if __name__ == "__main__":
