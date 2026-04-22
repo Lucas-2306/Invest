@@ -5,19 +5,33 @@ import numpy as np
 from core.training_config import OUTPUT_DIR, settings
 from core.training_db import engine
 
+MIN_PRICE = 5.0
+MIN_AVG_DAILY_VOLUME_20D = 100000
+MIN_AVG_DAILY_TRADED_VALUE_20D = 1000000.0
 
 BASE_FEATURE_COLUMNS = [
     "return_1d",
     "return_5d",
     "return_21d",
+    "return_63d",
+    "return_126d",
     "log_return_1d",
     "price_sma_20_ratio",
     "volatility_21d",
+    "volatility_63d",
+    "volatility_ratio_21_63",
+    "return_21d_over_vol_21d",
     "volume_ratio_20d",
     "high_low_ratio",
     "gap",
     "return_1d_vs_sector",
     "return_5d_vs_sector",
+    "momentum_21_63",
+    "momentum_5_21",
+    "avg_daily_volume_20d",
+    "avg_daily_traded_value_20d",
+    "volume_trend_5_20",
+    "traded_value_trend_5_20",
 
     "market_cap",
     "price_to_earnings",
@@ -39,6 +53,7 @@ REQUIRED_CORE_COLUMNS = [
     "return_1d",
     "return_5d",
     "return_21d",
+    "return_63d",
     "log_return_1d",
     "price_sma_20_ratio",
     "volatility_21d",
@@ -47,30 +62,14 @@ REQUIRED_CORE_COLUMNS = [
     "gap",
     "return_1d_vs_sector",
     "return_5d_vs_sector",
-    "target_5d",
+    "avg_daily_volume_20d",
+    "avg_daily_traded_value_20d",
+    "target_63d",
 ]
 
 
 def load_dataset(start_date: str) -> pd.DataFrame:
     query = f"""
-        WITH latest_fundamentals AS (
-            SELECT DISTINCT ON (fs.symbol_id)
-                fs.symbol_id,
-                fs.reference_date,
-                fs.market_cap,
-                fs.price_to_earnings,
-                fs.price_to_book,
-                fs.eps,
-                fs.roe,
-                fs.roa,
-                fs.debt_to_equity,
-                fs.dividend_yield,
-                fs.beta,
-                fs.fifty_two_week_high,
-                fs.fifty_two_week_low
-            FROM market_data.fundamentals_snapshot fs
-            ORDER BY fs.symbol_id, fs.reference_date DESC
-        )
         SELECT
             f.symbol_id,
             s.symbol,
@@ -88,8 +87,24 @@ def load_dataset(start_date: str) -> pd.DataFrame:
             f.gap,
             f.target_5d,
             f.target_5d_t1,
+            f.target_21d,
+            f.target_21d_t1,
+            f.target_63d,
+            f.target_63d_t1,
+            f.avg_daily_volume_20d,
+            f.avg_daily_traded_value_20d,
+            f.return_63d,
+            f.return_126d,
+            f.volatility_63d,
+            f.volatility_ratio_21_63,
+            f.return_21d_over_vol_21d,
+            f.momentum_21_63,
+            f.momentum_5_21,
+            f.volume_trend_5_20,
+            f.traded_value_trend_5_20,
             c.sector,
 
+            lf.reference_date AS fundamentals_reference_date,
             lf.market_cap,
             lf.price_to_earnings,
             lf.price_to_book,
@@ -107,13 +122,33 @@ def load_dataset(start_date: str) -> pd.DataFrame:
           ON s.id = f.symbol_id
         JOIN market_data.companies c
           ON c.id = s.company_id
-        LEFT JOIN latest_fundamentals lf
-          ON lf.symbol_id = f.symbol_id
+
+        LEFT JOIN LATERAL (
+            SELECT
+                fs.reference_date,
+                fs.market_cap,
+                fs.price_to_earnings,
+                fs.price_to_book,
+                fs.eps,
+                fs.roe,
+                fs.roa,
+                fs.debt_to_equity,
+                fs.dividend_yield,
+                fs.beta,
+                fs.fifty_two_week_high,
+                fs.fifty_two_week_low
+            FROM market_data.fundamentals_snapshot fs
+            WHERE fs.symbol_id = f.symbol_id
+              AND fs.reference_date <= f.trade_date
+            ORDER BY fs.reference_date DESC
+            LIMIT 1
+        ) lf ON TRUE
+
         WHERE f.trade_date >= '{start_date}'
         ORDER BY f.trade_date, s.symbol
     """
 
-    df = pd.read_sql_query(query, engine, parse_dates=["trade_date"])
+    df = pd.read_sql_query(query, engine, parse_dates=["trade_date", "fundamentals_reference_date"])
     return df
 
 
@@ -177,37 +212,27 @@ def add_fundamental_relative_features(df: pd.DataFrame) -> pd.DataFrame:
 def add_cross_sectional_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    cs_columns = [
-        "return_1d",
-        "return_5d",
-        "return_21d",
-        "log_return_1d",
-        "price_sma_20_ratio",
-        "volatility_21d",
-        "volume_ratio_20d",
-        "high_low_ratio",
-        "gap",
-        "return_1d_vs_sector",
-        "return_5d_vs_sector",
-
-        "market_cap",
-        "price_to_earnings",
-        "price_to_book",
-        "eps",
-        "roe",
-        "roa",
-        "debt_to_equity",
-        "dividend_yield",
-        "beta",
-        "fifty_two_week_high",
-        "fifty_two_week_low",
-        "sma20_to_52w_high",
-        "sma20_to_52w_low",
-    ]
+    cs_columns = BASE_FEATURE_COLUMNS.copy()
 
     for col in cs_columns:
         df[f"{col}_cs"] = df.groupby("trade_date")[col].rank(pct=True)
 
+    return df
+
+
+def apply_liquidity_filter(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    valid_volume = (
+        df["avg_daily_volume_20d"].notna()
+        & (df["avg_daily_volume_20d"] >= MIN_AVG_DAILY_VOLUME_20D)
+    )
+    valid_traded_value = (
+        df["avg_daily_traded_value_20d"].notna()
+        & (df["avg_daily_traded_value_20d"] >= MIN_AVG_DAILY_TRADED_VALUE_20D)
+    )
+
+    df = df[valid_volume & valid_traded_value].copy()
     return df
 
 
@@ -225,6 +250,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = add_fundamental_relative_features(df)
     df = add_cross_sectional_features(df)
     df = clip_target(df)
+    df = apply_liquidity_filter(df)
 
     # exige apenas o núcleo técnico + target
     df = df.dropna(subset=REQUIRED_CORE_COLUMNS)
@@ -289,6 +315,11 @@ def print_summary(df: pd.DataFrame) -> None:
             ]
         ].notna().mean().sort_values()
     )
+
+    if "fundamentals_reference_date" in df.columns:
+        lag_days = (df["trade_date"] - df["fundamentals_reference_date"]).dt.days
+        print("\nLag dos fundamentals usados (dias)")
+        print(lag_days.describe())
 
 
 def main() -> None:

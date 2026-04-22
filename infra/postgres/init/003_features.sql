@@ -14,12 +14,28 @@ CREATE TABLE IF NOT EXISTS market_data.features (
     volatility_21d NUMERIC(18,8),
 
     volume_ratio_20d NUMERIC(18,8),
+    avg_daily_volume_20d NUMERIC(20,2),
+    avg_daily_traded_value_20d NUMERIC(20,2),
 
     high_low_ratio NUMERIC(18,8),
     gap NUMERIC(18,8),
 
     target_5d NUMERIC(18,8),
     target_5d_t1 NUMERIC(18,8),
+    target_21d NUMERIC(18,8),
+    target_21d_t1 NUMERIC(18,8),
+    target_63d NUMERIC(18,8),
+    target_63d_t1 NUMERIC(18,8),
+
+    return_63d NUMERIC(18,8),
+    return_126d NUMERIC(18,8),
+    volatility_63d NUMERIC(18,8),
+    volatility_ratio_21_63 NUMERIC(18,8),
+    return_21d_over_vol_21d NUMERIC(18,8),
+    momentum_21_63 NUMERIC(18,8),
+    momentum_5_21 NUMERIC(18,8),
+    volume_trend_5_20 NUMERIC(18,8),
+    traded_value_trend_5_20 NUMERIC(18,8),
 
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 

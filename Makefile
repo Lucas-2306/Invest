@@ -29,7 +29,7 @@ help:
 	@echo "  make train-model         - Treina o modelo"
 	@echo "  make train-backtest      - Roda backtest"
 	@echo "  make train-analyze       - Roda análise das predições"
-	@echo "  make train-validation    - Gera arquivo de validação"
+	@echo "  make train-feature-ic    - Analise relação das features com os valores de IC"
 	@echo ""
 	@echo "Outros:"
 	@echo "  make clean               - Remove containers parados"
@@ -91,6 +91,9 @@ train-analyze:
 
 train-validation:
 	docker compose run --rm training python -m jobs.training.validation
+
+train-feature-ic:
+	docker compose run --rm training python -m jobs.training.analyze_feature_ic
 
 clean:
 	docker container prune -f

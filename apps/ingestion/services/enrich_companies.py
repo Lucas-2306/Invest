@@ -78,6 +78,12 @@ def run(session) -> None:
                     ingested_at = NOW()
             """)
 
+            provider_reference_date = (
+                profile.get("regularMarketTime")
+                or profile.get("earningsTimestamp")
+                or None
+            )
+
             payload = {
                 "symbol_id": symbol_id,
                 "reference_date": date.today(),

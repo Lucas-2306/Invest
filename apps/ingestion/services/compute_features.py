@@ -49,7 +49,6 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
         & (ratio_5d > 0.1)
         & (ratio_5d < 10.0)
     )
-
     df["return_5d"] = np.nan
     df.loc[valid_ratio_5d, "return_5d"] = ratio_5d.loc[valid_ratio_5d] - 1.0
 
@@ -63,14 +62,49 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     df["return_21d"] = np.nan
     df.loc[valid_ratio_21d, "return_21d"] = ratio_21d.loc[valid_ratio_21d] - 1.0
 
+    ratio_63d = df["ref_price"] / df["ref_price"].shift(63)
+    valid_ratio_63d = (
+        ratio_63d.notna()
+        & np.isfinite(ratio_63d)
+        & (ratio_63d > 0.02)
+        & (ratio_63d < 50.0)
+    )
+    df["return_63d"] = np.nan
+    df.loc[valid_ratio_63d, "return_63d"] = ratio_63d.loc[valid_ratio_63d] - 1.0
+
+    ratio_126d = df["ref_price"] / df["ref_price"].shift(126)
+    valid_ratio_126d = (
+        ratio_126d.notna()
+        & np.isfinite(ratio_126d)
+        & (ratio_126d > 0.01)
+        & (ratio_126d < 100.0)
+    )
+    df["return_126d"] = np.nan
+    df.loc[valid_ratio_126d, "return_126d"] = ratio_126d.loc[valid_ratio_126d] - 1.0
+
     df["sma_20"] = df["ref_price"].rolling(20, min_periods=20).mean()
     df["sma_50"] = df["ref_price"].rolling(50, min_periods=50).mean()
     df["price_sma_20_ratio"] = df["ref_price"] / df["sma_20"]
 
     df["volatility_21d"] = df["return_1d"].rolling(21, min_periods=21).std()
+    df["volatility_63d"] = df["return_1d"].rolling(63, min_periods=63).std()
 
     volume_avg_20d = df["volume"].rolling(20, min_periods=20).mean()
     df["volume_ratio_20d"] = df["volume"] / volume_avg_20d
+    df["avg_daily_volume_20d"] = volume_avg_20d
+
+    df["daily_traded_value"] = df["ref_price"] * df["volume"]
+    df["avg_daily_traded_value_20d"] = (
+        df["daily_traded_value"].rolling(20, min_periods=20).mean()
+    )
+
+    volume_avg_5d = df["volume"].rolling(5, min_periods=5).mean()
+    df["volume_trend_5_20"] = volume_avg_5d / volume_avg_20d
+
+    traded_value_avg_5d = df["daily_traded_value"].rolling(5, min_periods=5).mean()
+    df["traded_value_trend_5_20"] = (
+        traded_value_avg_5d / df["avg_daily_traded_value_20d"]
+    )
 
     valid_close = df["close_price"].notna() & (df["close_price"] > 0)
     df["high_low_ratio"] = np.nan
@@ -92,6 +126,32 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     df["gap"] = np.nan
     df.loc[valid_gap, "gap"] = raw_gap_ratio.loc[valid_gap] - 1.0
 
+    df["momentum_21_63"] = df["return_21d"] - df["return_63d"]
+    df["momentum_5_21"] = df["return_5d"] - df["return_21d"]
+
+    df["volatility_ratio_21_63"] = np.nan
+    valid_vol_ratio = (
+        df["volatility_21d"].notna()
+        & df["volatility_63d"].notna()
+        & (df["volatility_63d"] > 0)
+    )
+    df.loc[valid_vol_ratio, "volatility_ratio_21_63"] = (
+        df.loc[valid_vol_ratio, "volatility_21d"]
+        / df.loc[valid_vol_ratio, "volatility_63d"]
+    )
+
+    df["return_21d_over_vol_21d"] = np.nan
+    valid_ret_over_vol = (
+        df["return_21d"].notna()
+        & df["volatility_21d"].notna()
+        & (df["volatility_21d"] > 0)
+    )
+    df.loc[valid_ret_over_vol, "return_21d_over_vol_21d"] = (
+        df.loc[valid_ret_over_vol, "return_21d"]
+        / df.loc[valid_ret_over_vol, "volatility_21d"]
+    )
+
+    # Targets
     future_ratio_5d = df["ref_price"].shift(-5) / df["ref_price"]
     valid_target_5d = (
         future_ratio_5d.notna()
@@ -112,7 +172,65 @@ def compute(df: pd.DataFrame) -> pd.DataFrame:
     df["target_5d_t1"] = np.nan
     df.loc[valid_target_5d_t1, "target_5d_t1"] = future_ratio_5d_t1.loc[valid_target_5d_t1] - 1.0
 
-    df = df.drop(columns=["ref_price"])
+    future_ratio_21d = df["ref_price"].shift(-21) / df["ref_price"]
+    valid_target_21d = (
+        future_ratio_21d.notna()
+        & np.isfinite(future_ratio_21d)
+        & (future_ratio_21d > 0.02)
+        & (future_ratio_21d < 50.0)
+    )
+    df["target_21d"] = np.nan
+    df.loc[valid_target_21d, "target_21d"] = future_ratio_21d.loc[valid_target_21d] - 1.0
+
+    df["target_21d"] = df["target_21d"].clip(-0.5, 0.5)
+
+    future_ratio_21d_t1 = df["ref_price"].shift(-22) / df["ref_price"].shift(-1)
+
+    valid_target_21d_t1 = (
+        future_ratio_21d_t1.notna()
+        & np.isfinite(future_ratio_21d_t1)
+        & (future_ratio_21d_t1 > 0.02)
+        & (future_ratio_21d_t1 < 50.0)
+    )
+
+    df["target_21d_t1"] = np.nan
+    df.loc[valid_target_21d_t1, "target_21d_t1"] = (
+        future_ratio_21d_t1.loc[valid_target_21d_t1] - 1.0
+    )
+
+    df["target_21d_t1"] = df["target_21d_t1"].clip(-0.5, 0.5)
+
+    future_ratio_63d = df["ref_price"].shift(-63) / df["ref_price"]
+    valid_target_63d = (
+        future_ratio_63d.notna()
+        & np.isfinite(future_ratio_63d)
+        & (future_ratio_63d > 0.01)
+        & (future_ratio_63d < 100.0)
+    )
+    df["target_63d"] = np.nan
+    df.loc[valid_target_63d, "target_63d"] = future_ratio_63d.loc[valid_target_63d] - 1.0
+
+    df["target_63d"] = df["target_63d"].clip(-0.8, 0.8)
+
+    future_ratio_63d_t1 = df["ref_price"].shift(-64) / df["ref_price"].shift(-1)
+
+    valid_target_63d_t1 = (
+        future_ratio_63d_t1.notna()
+        & np.isfinite(future_ratio_63d_t1)
+        & (future_ratio_63d_t1 > 0.01)
+        & (future_ratio_63d_t1 < 100.0)
+    )
+
+    df["target_63d_t1"] = np.nan
+    df.loc[valid_target_63d_t1, "target_63d_t1"] = (
+        future_ratio_63d_t1.loc[valid_target_63d_t1] - 1.0
+    )
+
+    df["target_63d_t1"] = df["target_63d_t1"].clip(-0.8, 0.8)
+
+    ####
+
+    df = df.drop(columns=["ref_price", "daily_traded_value"])
     df = df.dropna(subset=["return_1d"])
 
     return df
