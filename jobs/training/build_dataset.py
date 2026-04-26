@@ -48,6 +48,61 @@ BASE_FEATURE_COLUMNS = [
 
 CS_FEATURE_COLUMNS = [f"{col}_cs" for col in BASE_FEATURE_COLUMNS]
 
+MARKET_FEATURE_COLUMNS = [
+    "ibov_return_1d",
+    "ibov_return_5d",
+    "ibov_return_21d",
+    "ibov_return_63d",
+    "ibov_vol_21d",
+    "ibov_vol_63d",
+    "ibov_above_sma_200",
+
+    "sp500_return_1d",
+    "sp500_return_5d",
+    "sp500_return_21d",
+    "sp500_return_63d",
+    "sp500_vol_21d",
+    "sp500_vol_63d",
+    "sp500_above_sma_200",
+
+    "selic_rate",
+    "selic_change_21d",
+    "selic_change_63d",
+
+    "ipca_monthly",
+    "ipca_3m",
+    "ipca_6m",
+    "ipca_12m",
+    "ipca_change_3m",
+    "ipca_change_6m",
+]
+
+MACRO_INTERACTION_COLUMNS = [
+    "return_21d_x_ibov_return_21d",
+    "return_63d_x_ibov_return_63d",
+    "return_126d_x_ibov_return_63d",
+    "momentum_21_63_x_ibov_return_63d",
+    "momentum_5_21_x_ibov_return_21d",
+
+    "return_21d_x_sp500_return_21d",
+    "return_63d_x_sp500_return_63d",
+    "return_126d_x_sp500_return_63d",
+
+    "volatility_21d_x_ibov_vol_21d",
+    "volatility_63d_x_ibov_vol_63d",
+    "volatility_21d_x_sp500_vol_21d",
+    "volatility_63d_x_sp500_vol_63d",
+
+    "return_21d_x_ibov_above_sma_200",
+    "return_63d_x_ibov_above_sma_200",
+    "momentum_21_63_x_ibov_above_sma_200",
+    "volatility_21d_x_ibov_above_sma_200",
+
+    "return_21d_x_selic_change_21d",
+    "return_63d_x_selic_change_63d",
+    "return_21d_x_ipca_12m",
+]
+
 # colunas mínimas para manter uma linha no dataset
 REQUIRED_CORE_COLUMNS = [
     "return_1d",
@@ -68,7 +123,9 @@ REQUIRED_CORE_COLUMNS = [
 ]
 
 
-def load_dataset(start_date: str) -> pd.DataFrame:
+def load_dataset(start_date: str, end_date: str | None = None) -> pd.DataFrame:
+    where_end = f"AND f.trade_date < '{end_date}'" if end_date else ""
+
     query = f"""
         SELECT
             f.symbol_id,
@@ -115,7 +172,36 @@ def load_dataset(start_date: str) -> pd.DataFrame:
             lf.dividend_yield,
             lf.beta,
             lf.fifty_two_week_high,
-            lf.fifty_two_week_low
+            lf.fifty_two_week_low,
+
+            mf.ibov_close,
+            mf.ibov_return_1d,
+            mf.ibov_return_5d,
+            mf.ibov_return_21d,
+            mf.ibov_return_63d,
+            mf.ibov_vol_21d,
+            mf.ibov_vol_63d,
+            mf.ibov_above_sma_200,
+
+            mf.sp500_close,
+            mf.sp500_return_1d,
+            mf.sp500_return_5d,
+            mf.sp500_return_21d,
+            mf.sp500_return_63d,
+            mf.sp500_vol_21d,
+            mf.sp500_vol_63d,
+            mf.sp500_above_sma_200,
+
+            mf.selic_rate,
+            mf.selic_change_21d,
+            mf.selic_change_63d,
+
+            mf.ipca_monthly,
+            mf.ipca_3m,
+            mf.ipca_6m,
+            mf.ipca_12m,
+            mf.ipca_change_3m,
+            mf.ipca_change_6m
 
         FROM market_data.features f
         JOIN market_data.symbols s
@@ -144,12 +230,19 @@ def load_dataset(start_date: str) -> pd.DataFrame:
             LIMIT 1
         ) lf ON TRUE
 
+        LEFT JOIN macro_data.market_features mf
+          ON mf.trade_date = f.trade_date
+
         WHERE f.trade_date >= '{start_date}'
+        {where_end}
         ORDER BY f.trade_date, s.symbol
     """
 
-    df = pd.read_sql_query(query, engine, parse_dates=["trade_date", "fundamentals_reference_date"])
-    return df
+    return pd.read_sql_query(
+        query,
+        engine,
+        parse_dates=["trade_date", "fundamentals_reference_date"],
+    )
 
 
 def normalize_sector(df: pd.DataFrame) -> pd.DataFrame:
@@ -183,17 +276,21 @@ def add_sector_relative_features(df: pd.DataFrame) -> pd.DataFrame:
 def add_fundamental_relative_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
+    for col in ["fifty_two_week_high", "fifty_two_week_low", "sma_20"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
     valid_high = df["fifty_two_week_high"].notna() & (df["fifty_two_week_high"] > 0)
     valid_low = df["fifty_two_week_low"].notna() & (df["fifty_two_week_low"] > 0)
     valid_sma20 = df["sma_20"].notna() & (df["sma_20"] > 0)
 
-    df["sma20_to_52w_high"] = np.nan
+    df["sma20_to_52w_high"] = pd.Series(np.nan, index=df.index, dtype="float64")
+    df["sma20_to_52w_low"] = pd.Series(np.nan, index=df.index, dtype="float64")
+
     df.loc[valid_sma20 & valid_high, "sma20_to_52w_high"] = (
         df.loc[valid_sma20 & valid_high, "sma_20"]
         / df.loc[valid_sma20 & valid_high, "fifty_two_week_high"]
     )
 
-    df["sma20_to_52w_low"] = np.nan
     df.loc[valid_sma20 & valid_low, "sma20_to_52w_low"] = (
         df.loc[valid_sma20 & valid_low, "sma_20"]
         / df.loc[valid_sma20 & valid_low, "fifty_two_week_low"]
@@ -242,17 +339,83 @@ def clip_target(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def add_macro_interaction_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    needed_cols = [
+        "return_21d",
+        "return_63d",
+        "return_126d",
+        "momentum_21_63",
+        "momentum_5_21",
+        "volatility_21d",
+        "volatility_63d",
+        "ibov_return_21d",
+        "ibov_return_63d",
+        "ibov_vol_21d",
+        "ibov_vol_63d",
+        "ibov_above_sma_200",
+        "sp500_return_21d",
+        "sp500_return_63d",
+        "sp500_vol_21d",
+        "sp500_vol_63d",
+        "selic_change_21d",
+        "selic_change_63d",
+        "ipca_12m",
+    ]
+
+    for col in needed_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    pairs = {
+        "return_21d_x_ibov_return_21d": ("return_21d", "ibov_return_21d"),
+        "return_63d_x_ibov_return_63d": ("return_63d", "ibov_return_63d"),
+        "return_126d_x_ibov_return_63d": ("return_126d", "ibov_return_63d"),
+        "momentum_21_63_x_ibov_return_63d": ("momentum_21_63", "ibov_return_63d"),
+        "momentum_5_21_x_ibov_return_21d": ("momentum_5_21", "ibov_return_21d"),
+
+        "return_21d_x_sp500_return_21d": ("return_21d", "sp500_return_21d"),
+        "return_63d_x_sp500_return_63d": ("return_63d", "sp500_return_63d"),
+        "return_126d_x_sp500_return_63d": ("return_126d", "sp500_return_63d"),
+
+        "volatility_21d_x_ibov_vol_21d": ("volatility_21d", "ibov_vol_21d"),
+        "volatility_63d_x_ibov_vol_63d": ("volatility_63d", "ibov_vol_63d"),
+        "volatility_21d_x_sp500_vol_21d": ("volatility_21d", "sp500_vol_21d"),
+        "volatility_63d_x_sp500_vol_63d": ("volatility_63d", "sp500_vol_63d"),
+
+        "return_21d_x_ibov_above_sma_200": ("return_21d", "ibov_above_sma_200"),
+        "return_63d_x_ibov_above_sma_200": ("return_63d", "ibov_above_sma_200"),
+        "momentum_21_63_x_ibov_above_sma_200": ("momentum_21_63", "ibov_above_sma_200"),
+        "volatility_21d_x_ibov_above_sma_200": ("volatility_21d", "ibov_above_sma_200"),
+
+        "return_21d_x_selic_change_21d": ("return_21d", "selic_change_21d"),
+        "return_63d_x_selic_change_63d": ("return_63d", "selic_change_63d"),
+        "return_21d_x_ipca_12m": ("return_21d", "ipca_12m"),
+    }
+
+    for new_col, (left_col, right_col) in pairs.items():
+        if left_col in df.columns and right_col in df.columns:
+            df[new_col] = df[left_col] * df[right_col]
+        else:
+            df[new_col] = np.nan
+
+    return df
+
+
 def build_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     df = normalize_sector(df)
     df = add_sector_relative_features(df)
     df = add_fundamental_relative_features(df)
-    df = add_cross_sectional_features(df)
-    df = clip_target(df)
+    df = add_macro_interaction_features(df)
+
     df = apply_liquidity_filter(df)
 
-    # exige apenas o núcleo técnico + target
+    df = add_cross_sectional_features(df)
+    df = clip_target(df)
+
     df = df.dropna(subset=REQUIRED_CORE_COLUMNS)
 
     df = pd.get_dummies(
@@ -273,14 +436,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 def save_dataset(df: pd.DataFrame, output_dir: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    csv_path = output_dir / "model_dataset.csv"
-    df.to_csv(csv_path, index=False)
-
     parquet_path = output_dir / "model_dataset.parquet"
     df.to_parquet(parquet_path, index=False)
 
     print(f"Parquet salvo em: {parquet_path}")
-    print(f"CSV salvo em: {csv_path}")
 
 
 def print_summary(df: pd.DataFrame) -> None:
@@ -321,10 +480,45 @@ def print_summary(df: pd.DataFrame) -> None:
         print("\nLag dos fundamentals usados (dias)")
         print(lag_days.describe())
 
+    market_cols = [col for col in MARKET_FEATURE_COLUMNS if col in df.columns]
+    if market_cols:
+        print("\nPreenchimento de colunas de mercado")
+        print(df[market_cols].notna().mean().sort_values())
+
 
 def main() -> None:
-    raw_df = load_dataset(start_date=settings.dataset_start_date)
-    dataset_df = build_features(raw_df)
+    start_year = pd.Timestamp(settings.dataset_start_date).year
+    end_year = pd.Timestamp.today().year
+
+    parts = []
+
+    for year in range(start_year, end_year + 1):
+        start_date = f"{year}-01-01"
+        end_date = f"{year + 1}-01-01"
+
+        print(f"\nGerando dataset parcial: {start_date} → {end_date}")
+
+        raw_df = load_dataset(start_date=start_date, end_date=end_date)
+
+        if raw_df.empty:
+            print(f"Sem dados para {year}")
+            continue
+
+        part_df = build_features(raw_df)
+
+        if part_df.empty:
+            print(f"Parte {year} vazia após filtros")
+            continue
+
+        parts.append(part_df)
+        print(f"Parte {year}: {len(part_df)} linhas")
+
+    if not parts:
+        raise ValueError("Nenhuma parte do dataset foi gerada.")
+
+    dataset_df = pd.concat(parts, ignore_index=True)
+    dataset_df = dataset_df.sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+
     save_dataset(dataset_df, OUTPUT_DIR)
     print_summary(dataset_df)
 

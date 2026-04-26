@@ -42,5 +42,61 @@ CREATE TABLE IF NOT EXISTS market_data.features (
     PRIMARY KEY (symbol_id, trade_date)
 );
 
+CREATE INDEX IF NOT EXISTS idx_features_trade_date
+ON market_data.features (trade_date);
+
 CREATE INDEX IF NOT EXISTS idx_features_symbol_date
 ON market_data.features(symbol_id, trade_date DESC);
+
+CREATE SCHEMA IF NOT EXISTS macro_data;
+
+CREATE TABLE IF NOT EXISTS macro_data.market_features (
+    trade_date DATE PRIMARY KEY,
+
+    -- =========================
+    -- IBOV
+    -- =========================
+    ibov_close DOUBLE PRECISION,
+    ibov_return_1d DOUBLE PRECISION,
+    ibov_return_5d DOUBLE PRECISION,
+    ibov_return_21d DOUBLE PRECISION,
+    ibov_return_63d DOUBLE PRECISION,
+    ibov_vol_21d DOUBLE PRECISION,
+    ibov_vol_63d DOUBLE PRECISION,
+    ibov_above_sma_200 DOUBLE PRECISION,
+
+    -- =========================
+    -- S&P 500
+    -- =========================
+    sp500_close DOUBLE PRECISION,
+    sp500_return_1d DOUBLE PRECISION,
+    sp500_return_5d DOUBLE PRECISION,
+    sp500_return_21d DOUBLE PRECISION,
+    sp500_return_63d DOUBLE PRECISION,
+    sp500_vol_21d DOUBLE PRECISION,
+    sp500_vol_63d DOUBLE PRECISION,
+    sp500_above_sma_200 DOUBLE PRECISION,
+
+    -- =========================
+    -- SELIC
+    -- =========================
+    selic_rate DOUBLE PRECISION,
+    selic_change_21d DOUBLE PRECISION,
+    selic_change_63d DOUBLE PRECISION,
+
+    -- =========================
+    -- IPCA
+    -- =========================
+    ipca_monthly DOUBLE PRECISION,
+    ipca_3m DOUBLE PRECISION,
+    ipca_6m DOUBLE PRECISION,
+    ipca_12m DOUBLE PRECISION,
+    ipca_change_3m DOUBLE PRECISION,
+    ipca_change_6m DOUBLE PRECISION,
+
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_market_features_trade_date
+ON macro_data.market_features (trade_date);

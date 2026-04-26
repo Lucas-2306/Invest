@@ -209,6 +209,7 @@ def train_model(
         random_state=config.random_state,
         force_col_wise=True,
         label_gain=list(range(config.rank_label_buckets)),
+        verbosity=-1,
     )
     model.fit(X_train, y_train_rank, group=train_groups)
     return model
@@ -289,7 +290,7 @@ def save_predictions(
 
     pred = model.predict(X_test)
 
-    required_cols = [
+    base_cols = [
         "trade_date",
         "symbol",
         config.target_column,
@@ -297,6 +298,20 @@ def save_predictions(
         "avg_daily_volume_20d",
         "avg_daily_traded_value_20d",
     ]
+
+    macro_cols = [
+        "ibov_above_sma_200",
+        "ibov_return_21d",
+        "ibov_vol_21d",
+        "sp500_above_sma_200",
+        "sp500_return_21d",
+        "sp500_vol_21d",
+        "selic_rate",
+        "ipca_12m",
+    ]
+
+    required_cols = base_cols + [col for col in macro_cols]
+    
     missing_cols = [col for col in required_cols if col not in test_df.columns]
     if missing_cols:
         raise ValueError(f"Colunas ausentes para salvar predições: {missing_cols}")

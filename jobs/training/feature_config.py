@@ -53,4 +53,56 @@ EXCLUDED_MODEL_FEATURE_COLUMNS = [
     "fifty_two_week_low",
     "sma20_to_52w_high",
     "sma20_to_52w_low",
+
+    # =========================
+    # MARKET FEATURES
+    # =========================
+    "ibov_return_1d",
+    "ibov_return_5d",
+    "ibov_return_21d",
+    "ibov_return_63d",
+    "ibov_vol_21d",
+    "ibov_vol_63d",
+    "ibov_above_sma_200",
+
+    "sp500_return_1d",
+    "sp500_return_5d",
+    "sp500_return_21d",
+    "sp500_return_63d",
+    "sp500_vol_21d",
+    "sp500_vol_63d",
+    "sp500_above_sma_200",
+
+    "selic_rate",
+    "selic_change_21d",
+    "selic_change_63d",
+
+    "ipca_12m",
+
+    # =========================
+    # MACRO INTERACTIONS
+    # =========================
+    "return_21d_x_ibov_return_21d",
+    "return_63d_x_ibov_return_63d",
+    "return_126d_x_ibov_return_63d",
+    "momentum_21_63_x_ibov_return_63d",
+    "momentum_5_21_x_ibov_return_21d",
+
+    "return_21d_x_sp500_return_21d",
+    "return_63d_x_sp500_return_63d",
+    "return_126d_x_sp500_return_63d",
+
+    "volatility_21d_x_ibov_vol_21d",
+    "volatility_63d_x_ibov_vol_63d",
+    "volatility_21d_x_sp500_vol_21d",
+    "volatility_63d_x_sp500_vol_63d",
+
+    "return_21d_x_ibov_above_sma_200",
+    "return_63d_x_ibov_above_sma_200",
+    "momentum_21_63_x_ibov_above_sma_200",
+    "volatility_21d_x_ibov_above_sma_200",
+
+    "return_21d_x_selic_change_21d",
+    "return_63d_x_selic_change_63d",
+    "return_21d_x_ipca_12m",
 ]

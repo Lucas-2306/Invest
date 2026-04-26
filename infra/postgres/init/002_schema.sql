@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS market_data.fundamentals_snapshot (
     UNIQUE (symbol_id, reference_date)
 );
 
+CREATE INDEX IF NOT EXISTS idx_fundamentals_symbol_reference_date
+ON market_data.fundamentals_snapshot (symbol_id, reference_date DESC);
+
 CREATE TABLE IF NOT EXISTS market_data.corporate_actions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     symbol_id UUID NOT NULL REFERENCES market_data.symbols(id) ON DELETE CASCADE,

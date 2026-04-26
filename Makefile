@@ -21,6 +21,7 @@ help:
 	@echo "  make ingest-bootstrap    - Carrega universo de símbolos"
 	@echo "  make ingest-enrich       - Enriquece empresas/fundamentos"
 	@echo "  make ingest-prices       - Ingere preços diários"
+	@echo "  make ingest-market       - Ingere features de mercado"
 	@echo "  make ingest-features     - Calcula features"
 	@echo ""
 	@echo "Training:"
@@ -29,7 +30,9 @@ help:
 	@echo "  make train-model         - Treina o modelo"
 	@echo "  make train-backtest      - Roda backtest"
 	@echo "  make train-analyze       - Roda análise das predições"
-	@echo "  make train-feature-ic    - Analise relação das features com os valores de IC"
+	@echo "  make train-feature-ic    - Analisa relação das features com os valores de IC"
+	@echo "  make train-experiment    - Testa grids de valores em treino e backtest"
+	@echo "  make train-walk    	  - Roda backtest walkforward"
 	@echo ""
 	@echo "Outros:"
 	@echo "  make clean               - Remove containers parados"
@@ -71,6 +74,9 @@ ingest-enrich:
 ingest-prices:
 	docker compose run --rm ingestion python -m jobs.ingestion.ingest_daily_prices
 
+ingest-market:
+	docker compose run --rm ingestion python -m jobs.ingestion.market
+
 ingest-features:
 	docker compose run --rm ingestion python -m jobs.ingestion.compute_features
 
@@ -94,6 +100,12 @@ train-validation:
 
 train-feature-ic:
 	docker compose run --rm training python -m jobs.training.analyze_feature_ic
+
+make train-experiment:
+	docker compose run --rm training python -m jobs.training.run_experiment_grid
+
+make train-walk:
+	docker compose run --rm training python -m jobs.training.walkforward
 
 clean:
 	docker container prune -f
